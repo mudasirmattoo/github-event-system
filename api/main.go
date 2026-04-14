@@ -1,11 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
+
+var ctx = context.Background()
+
+var rdb = redis.NewClient(&redis.Options{
+	Addr: "localhost:6379",
+})
 
 func main() {
 	r := gin.Default()
@@ -35,6 +44,7 @@ func main() {
 
 		// Branch (ref = refs/heads/main)
 		branch := payload["ref"]
+		branchName := strings.TrimPrefix(branch.(string), "refs/heads/")
 
 		// User info
 		pusherData := payload["pusher"].(map[string]interface{})
@@ -54,17 +64,48 @@ func main() {
 
 		compareURL := payload["compare"]
 
-		log.Println("----- New Event -----")
-		log.Println("Delivery ID:", deliveryID)
-		log.Println("Event Type:", eventType)
-		log.Println("Repo:", repoName)
-		log.Println("Full Repo:", fullRepo)
-		log.Println("Branch:", branch)
-		log.Println("Pushed by:", pusher)
-		log.Println("Commit ID:", commitID)
-		log.Println("Message:", message)
-		log.Println("Timestamp:", timestamp)
-		log.Println("Compare URL:", compareURL)
+		// log.Println("----- New Event -----")
+		// log.Println("Delivery ID:", deliveryID)
+		// log.Println("Event Type:", eventType)
+		// log.Println("Repo:", repoName)
+		// log.Println("Full Repo:", fullRepo)
+		// log.Println("Branch:", branch)
+		// log.Println("Branch Name:", branchName)
+		// log.Println("Pushed by:", pusher)
+		// log.Println("Commit ID:", commitID)
+		// log.Println("Message:", message)
+		// log.Println("Timestamp:", timestamp)
+		// log.Println("Compare URL:", compareURL)
+
+		event := map[string]interface{}{
+			"event_type":  eventType,
+			"delivery_id": deliveryID,
+			"repo":        repoName,
+			"full_repo":   fullRepo,
+			"branch":      branch,
+			"branch name": branchName,
+			"pusher":      pusher,
+			"commit_id":   commitID,
+			"message":     message,
+			"timestamp":   timestamp,
+			"compare_url": compareURL,
+		}
+
+		// Convert event → JSON string
+		eventJSON, err := json.Marshal(event)
+		if err != nil {
+			log.Println("Error marshaling event:", err)
+			return
+		}
+
+		// push to redis queue -- name github_events_queue
+		err = rdb.LPush(ctx, "github_events_queue", eventJSON).Err()
+		if err != nil {
+			log.Println("Redis push error:", err)
+			return
+		}
+
+		log.Println("Event pushed to Redis queue")
 
 		c.JSON(200, gin.H{
 			"message": "Webhook received",
