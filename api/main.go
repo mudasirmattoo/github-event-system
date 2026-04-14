@@ -10,19 +10,17 @@ func main() {
 	r := gin.Default()
 
 	r.POST("/webhook", func(c *gin.Context) {
-		type WebhookPayload struct {
-			Event string `json:"event"`
-			Repo  string `json:"repo"`
-		}
 
-		var payload WebhookPayload
+		eventType := c.GetHeader("X-GitHub-Event")
 
-		if err := c.BindJSON(&payload); err != nil {
-			c.JSON(400, gin.H{"error": "Invalid JSON"})
+		body, err := c.GetRawData()
+		if err != nil {
+			c.JSON(400, gin.H{"error": "Cannot read body"})
 			return
 		}
 
-		log.Println("Received event:", payload)
+		log.Println("Event Type:", eventType)
+		log.Println("Raw Body:", string(body))
 
 		c.JSON(200, gin.H{
 			"message": "Webhook received",
