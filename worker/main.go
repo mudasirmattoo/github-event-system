@@ -39,7 +39,7 @@ func main() {
 			continue
 		}
 
-		// Process event (for now just log)
+		// Process event
 		log.Println("Processing event...")
 
 		// simulating failure
@@ -49,11 +49,16 @@ func main() {
 			log.Println("Invalid repo type")
 			continue
 		}
+		log.Printf("Repo value: %v, Type: %T\n", event["repo"], event["repo"])
 
 		if repo == "github-event-system" {
 			log.Println("simulated failure")
 
-			retryCount := int(event["retry_count"].(float64))
+			retryVal, ok := event["retry_count"].(float64)
+			if !ok {
+				retryVal = 0
+			}
+			retryCount := int(retryVal)
 
 			if retryCount < 3 {
 				// Increment retry count
