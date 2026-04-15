@@ -44,7 +44,13 @@ func main() {
 
 		// simulating failure
 
-		if event["repo"] == "github-event-system" {
+		repo, ok := event["repo"].(string)
+		if !ok {
+			log.Println("Invalid repo type")
+			continue
+		}
+
+		if repo == "github-event-system" {
 			log.Println("simulated failure")
 
 			retryCount := int(event["retry_count"].(float64))
