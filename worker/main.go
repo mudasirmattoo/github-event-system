@@ -45,6 +45,7 @@ func main() {
 		// simulating failure
 
 		repo, ok := event["repo"].(string)
+		log.Printf("Repo value: '%s'\n", repo)
 		if !ok {
 			log.Println("Invalid repo type")
 			continue
