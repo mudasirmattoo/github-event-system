@@ -49,7 +49,7 @@ func main() {
 			log.Println("Invalid repo type")
 			continue
 		}
-		log.Printf("Repo value: %v, Type: %T\n", event["repo"], event["repo"])
+		// log.Printf("Repo value: %v, Type: %T\n", event["repo"], event["repo"])
 
 		if repo == "github-event-system" {
 			log.Println("simulated failure")
