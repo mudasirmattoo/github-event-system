@@ -89,6 +89,7 @@ func main() {
 			"message":     message,
 			"timestamp":   timestamp,
 			"compare_url": compareURL,
+			"retry_count": 0,
 		}
 
 		// Convert event → JSON string
