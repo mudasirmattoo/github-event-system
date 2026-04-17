@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GitHub Event System - Pipeline Visualization</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.5); }
+      50% { box-shadow: 0 0 40px rgba(59, 130, 246, 0.8); }
+    }
+    
+    @keyframes flow {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+    
+    .pipeline-flow {
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .pipeline-flow::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #3b82f6, transparent);
+      animation: flow 2s linear infinite;
+      transform: translateY(-50%);
+    }
+    
+    .pulse-glow {
+      animation: pulse-glow 2s ease-in-out infinite;
+    }
+    
+    .event-card {
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+    
+    .event-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3);
+    }
+  </style>
+</head>
+
+<body class="bg-gradient-to-br from-gray-50 via-blue-50 to-gray-100 text-gray-800 min-h-screen p-6">
+
+  <div class="max-w-7xl mx-auto">
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <h1 class="text-4xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+        GitHub Event System
+      </h1>
+      <p class="text-gray-600">Real-time Event Pipeline Visualization</p>
+    </div>
+
+    <!-- Stats Dashboard -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+      <div class="bg-white border border-gray-200 shadow-lg p-6 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-gray-600 text-sm font-medium">Total Events</p>
+            <p class="text-3xl font-bold text-gray-800" id="total">0</p>
+          </div>
+          <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+            </svg>
+          </div>
+        </div>
+      </div>
+      
+      <div class="bg-white border border-green-200 shadow-lg p-6 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-green-600 text-sm font-medium">Success</p>
+            <p class="text-3xl font-bold text-green-700" id="success">0</p>
+          </div>
+          <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+            <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+          </div>
+        </div>
+      </div>
+      
+      <div class="bg-white border border-red-200 shadow-lg p-6 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-red-600 text-sm font-medium">Failed</p>
+            <p class="text-3xl font-bold text-red-700" id="failed">0</p>
+          </div>
+          <div class="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+            <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+          </div>
+        </div>
+      </div>
+      
+      <div class="bg-white border border-yellow-200 shadow-lg p-6 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-yellow-600 text-sm font-medium">Retrying</p>
+            <p class="text-3xl font-bold text-yellow-700" id="retry">0</p>
+          </div>
+          <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+            <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pipeline Visualization -->
+    <div class="bg-white border border-gray-200 shadow-lg rounded-2xl p-8 mb-8">
+      <h2 class="text-2xl font-bold mb-6 flex items-center text-gray-800">
+        <svg class="w-6 h-6 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+        </svg>
+        Event Pipeline Flow
+      </h2>
+      
+      <div id="pipelineContainer" class="mb-6">
+        <div class="text-center text-gray-500 py-12">
+          <svg class="w-16 h-16 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2z"></path>
+          </svg>
+          <p class="text-gray-600">Click on an event below to see its pipeline journey</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Events Table -->
+    <div class="bg-white border border-gray-200 shadow-lg rounded-2xl p-6">
+      <h2 class="text-2xl font-bold mb-6 text-gray-800">Recent Events</h2>
+      
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead>
+            <tr class="border-b border-gray-200">
+              <th class="px-4 py-3 text-left text-gray-600 font-semibold">Repository</th>
+              <th class="px-4 py-3 text-left text-gray-600 font-semibold">Event Type</th>
+              <th class="px-4 py-3 text-left text-gray-600 font-semibold">Message</th>
+              <th class="px-4 py-3 text-left text-gray-600 font-semibold">Status</th>
+              <th class="px-4 py-3 text-center text-gray-600 font-semibold">Retries</th>
+              <th class="px-4 py-3 text-left text-gray-600 font-semibold">Delivery ID</th>
+              <th class="px-4 py-3 text-left text-gray-600 font-semibold">Time</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody" class="divide-y divide-gray-200">
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+let selectedEvent = null;
+
+async function fetchEvents() {
+  try {
+    const res = await fetch("/api/events");
+    const data = await res.json();
+
+    // Update Stats
+    document.getElementById("total").innerText = data.length;
+    document.getElementById("success").innerText = data.filter(e => e.status === "success").length;
+    document.getElementById("failed").innerText = data.filter(e => e.status === "failed").length;
+    document.getElementById("retry").innerText = data.filter(e => e.status === "retry").length;
+
+    // Update Table
+    const tableBody = document.getElementById("tableBody");
+    tableBody.innerHTML = "";
+
+    data.forEach(event => {
+      const statusConfig = getStatusConfig(event.status);
+      
+      const row = document.createElement("tr");
+      row.className = "event-card hover:bg-blue-50 cursor-pointer transition-colors";
+      
+      row.innerHTML = `
+        <td class="px-4 py-4">
+          <div class="flex items-center">
+            <div class="w-2 h-2 rounded-full ${statusConfig.bgColor} mr-3"></div>
+            <span class="font-medium text-gray-800">${event.repo || 'N/A'}</span>
+          </div>
+        </td>
+        <td class="px-4 py-4">
+          <span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-700 font-medium">
+            ${event.event_type || 'push'}
+          </span>
+        </td>
+        <td class="px-4 py-4">
+          <p class="text-sm text-gray-700 truncate max-w-xs" title="${event.message || 'No message'}">
+            ${event.message || 'No message'}
+          </p>
+        </td>
+        <td class="px-4 py-4">
+          <span class="px-3 py-1 text-xs rounded-full ${statusConfig.bgColor} ${statusConfig.textColor} font-medium">
+            ${statusConfig.icon} ${event.status}
+          </span>
+        </td>
+        <td class="px-4 py-4 text-center">
+          ${event.retry_count > 0 ? `
+            <span class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-700 font-medium">
+              ${event.retry_count}
+            </span>
+          ` : '<span class="text-gray-400">-</span>'}
+        </td>
+        <td class="px-4 py-4">
+          <code class="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600 font-mono">
+            ${event.delivery_id || 'N/A'}
+          </code>
+        </td>
+        <td class="px-4 py-4 text-sm text-gray-600">
+          ${new Date(event.created_at).toLocaleString()}
+        </td>
+      `;
+
+      row.onclick = () => showPipeline(event);
+      tableBody.appendChild(row);
+    });
+
+    // Auto-select first event if none selected
+    if (data.length > 0 && !selectedEvent) {
+      showPipeline(data[0]);
+    }
+  } catch (error) {
+    console.error('Error fetching events:', error);
+  }
+}
+
+function getStatusConfig(status) {
+  const configs = {
+    success: {
+      bgColor: 'bg-green-500',
+      textColor: 'text-white',
+      icon: ' ',
+    },
+    failed: {
+      bgColor: 'bg-red-500',
+      textColor: 'text-white',
+      icon: ' ',
+    },
+    retry: {
+      bgColor: 'bg-yellow-500',
+      textColor: 'text-white',
+      icon: ' ',
+    }
+  };
+  return configs[status] || configs.success;
+}
+
+function showPipeline(event) {
+  selectedEvent = event;
+  const container = document.getElementById("pipelineContainer");
+  const statusConfig = getStatusConfig(event.status);
+  
+  // Determine pipeline stages based on event status
+  const stages = getPipelineStages(event);
+  
+  container.innerHTML = `
+    <div class="space-y-6">
+      <!-- Event Details -->
+      <div class="bg-gray-50 rounded-xl p-4 border border-gray-200">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-semibold text-lg text-gray-800">Event Details</h3>
+          <span class="px-3 py-1 text-xs rounded-full ${statusConfig.bgColor} ${statusConfig.textColor} font-medium">
+            ${statusConfig.icon} ${event.status.toUpperCase()}
+          </span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+          <div>
+            <p class="text-gray-600 font-medium">Repository</p>
+            <p class="font-medium text-gray-800">${event.repo || 'N/A'}</p>
+          </div>
+          <div>
+            <p class="text-gray-600 font-medium">Event Type</p>
+            <p class="font-medium text-gray-800">${event.event_type || 'push'}</p>
+          </div>
+          <div>
+            <p class="text-gray-600 font-medium">Branch</p>
+            <p class="font-medium text-gray-800">${event.branch || 'main'}</p>
+          </div>
+          <div>
+            <p class="text-gray-600 font-medium">Delivery ID</p>
+            <p class="font-mono text-xs bg-gray-100 px-2 py-1 rounded text-gray-700 break-all">${event.delivery_id || 'N/A'}</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Pipeline Flow -->
+      <div class="relative">
+        <div class="flex items-center justify-between relative">
+          ${stages.map((stage, index) => `
+            <div class="flex flex-col items-center z-10">
+              <div class="w-16 h-16 rounded-full ${stage.color} ${stage.active ? 'pulse-glow' : ''} flex items-center justify-center mb-2">
+                ${stage.icon}
+              </div>
+              <p class="text-xs font-medium text-center text-gray-800">${stage.name}</p>
+              <p class="text-xs text-gray-500 text-center mt-1">${stage.description}</p>
+            </div>
+            ${index < stages.length - 1 ? `
+              <div class="flex-1 h-1 ${stage.active ? 'bg-blue-500' : 'bg-gray-300'} mx-2 pipeline-flow"></div>
+            ` : ''}
+          `).join('')}
+        </div>
+      </div>
+      
+      <!-- Timeline -->
+      <div class="bg-gray-50 rounded-xl p-4 border border-gray-200">
+        <h4 class="font-semibold mb-3 text-gray-800">Event Timeline</h4>
+        <div class="space-y-2">
+          <div class="flex items-center text-sm">
+            <div class="w-2 h-2 bg-blue-500 rounded-full mr-3"></div>
+            <span class="text-gray-600 font-medium">Received:</span>
+            <span class="ml-auto text-gray-800">${new Date(event.created_at).toLocaleString()}</span>
+          </div>
+          ${event.retry_count > 0 ? `
+            <div class="flex items-center text-sm">
+              <div class="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
+              <span class="text-gray-600 font-medium">Retry Attempts:</span>
+              <span class="ml-auto text-gray-800">${event.retry_count}</span>
+            </div>
+          ` : ''}
+          <div class="flex items-center text-sm">
+            <div class="w-2 h-2 ${statusConfig.bgColor} rounded-full mr-3"></div>
+            <span class="text-gray-600 font-medium">Final Status:</span>
+            <span class="ml-auto capitalize text-gray-800">${event.status}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function getPipelineStages(event) {
+  const baseStages = [
+    {
+      name: "GitHub",
+      description: "Webhook sent",
+      icon: `<svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`,
+      color: "bg-gray-600",
+      active: true
+    },
+    {
+      name: "API",
+      description: "Event received",
+      icon: `<svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>`,
+      color: "bg-blue-600",
+      active: true
+    },
+    {
+      name: "Redis",
+      description: "Queued for processing",
+      icon: `<svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`,
+      color: "bg-red-600",
+      active: true
+    },
+    {
+      name: "Worker",
+      description: "Processing event",
+      icon: `<svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>`,
+      color: "bg-yellow-600",
+      active: event.status !== 'success' && event.status !== 'failed'
+    },
+    {
+      name: "Database",
+      description: "Event stored",
+      icon: `<svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path></svg>`,
+      color: "bg-green-600",
+      active: event.status === 'success'
+    }
+  ];
+
+  // Add retry stage if applicable
+  if (event.status === 'retry' || event.retry_count > 0) {
+    baseStages.splice(4, 0, {
+      name: "Retry Queue",
+      description: `Attempt ${event.retry_count || 1}`,
+      icon: `<svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`,
+      color: "bg-orange-600",
+      active: event.status === 'retry'
+    });
+  }
+
+  // Add failed stage if applicable
+  if (event.status === 'failed') {
+    baseStages.push({
+      name: "Failed",
+      description: "Processing failed",
+      icon: `<svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`,
+      color: "bg-red-600",
+      active: true
+    });
+  }
+
+  return baseStages;
+}
+
+// Auto-refresh every 5 seconds
+fetchEvents();
+setInterval(fetchEvents, 5000);
+
+</script>
+
+</body>
+</html>
