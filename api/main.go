@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"database/sql"
@@ -16,16 +18,35 @@ import (
 
 var ctx = context.Background()
 
-var rdb = redis.NewClient(&redis.Options{
-	Addr: "localhost:6379",
-})
+func getRedisClient() *redis.Client {
+	redisHost := getEnv("REDIS_HOST", "localhost")
+	redisPort := getEnv("REDIS_PORT", "6379")
+
+	return redis.NewClient(&redis.Options{
+		Addr: redisHost + ":" + redisPort,
+	})
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
 
 var db *sql.DB
 
 func initDB() {
 	var err error
 
-	connStr := "user=postgres dbname=github_events sslmode=disable"
+	dbHost := getEnv("DB_HOST", "localhost")
+	dbPort := getEnv("DB_PORT", "5432")
+	dbName := getEnv("DB_NAME", "github_events")
+	dbUser := getEnv("DB_USER", "postgres")
+	dbPassword := getEnv("DB_PASSWORD", "postgres")
+
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword, dbName)
 
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
@@ -129,6 +150,7 @@ func main() {
 		}
 
 		// push to redis queue -- name github_events_queue
+		rdb := getRedisClient()
 		err = rdb.LPush(ctx, "github_events_queue", eventJSON).Err()
 		if err != nil {
 			log.Println("Redis push error:", err)

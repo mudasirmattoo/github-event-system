@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"database/sql"
@@ -14,18 +16,48 @@ import (
 
 var ctx = context.Background()
 
-var rdb = redis.NewClient(&redis.Options{
-	Addr: "localhost:6379",
-})
+func getRedisClient() *redis.Client {
+	redisHost := getEnv("REDIS_HOST", "localhost")
+	redisPort := getEnv("REDIS_PORT", "6379")
 
-const workerCount = 5
+	return redis.NewClient(&redis.Options{
+		Addr: redisHost + ":" + redisPort,
+	})
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getWorkerCount() int {
+	if count := os.Getenv("WORKER_COUNT"); count != "" {
+		if c, err := fmt.Sscanf(count, "%d", new(int)); err == nil && c == 1 {
+			var wc int
+			fmt.Sscanf(count, "%d", &wc)
+			return wc
+		}
+	}
+	return 5
+}
+
+const defaultWorkerCount = 5
 
 var db *sql.DB
 
 func initDB() {
 	var err error
 
-	connStr := "user=postgres dbname=github_events sslmode=disable"
+	dbHost := getEnv("DB_HOST", "localhost")
+	dbPort := getEnv("DB_PORT", "5432")
+	dbName := getEnv("DB_NAME", "github_events")
+	dbUser := getEnv("DB_USER", "postgres")
+	dbPassword := getEnv("DB_PASSWORD", "postgres")
+
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword, dbName)
 
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
@@ -49,11 +81,13 @@ func main() {
 	jobs := make(chan string, 100)
 
 	// Start workers
+	workerCount := getWorkerCount()
 	for i := 0; i < workerCount; i++ {
 		go worker(jobs, i)
 	}
 
 	// Fetch from Redis
+	rdb := getRedisClient()
 	for {
 		result, err := rdb.BRPop(ctx, 0*time.Second, "github_events_queue", "retry_queue").Result()
 		if err != nil {
@@ -179,6 +213,7 @@ func processEvent(eventJSON string) {
 	isRetry, _ := event["is_retry"].(bool)
 
 	if !isRetry {
+		rdb := getRedisClient()
 		exists, _ := rdb.SIsMember(ctx, "processed_events", deliveryID).Result()
 		if exists {
 			log.Println("Duplicate event detected, skipping:", deliveryID)
@@ -217,6 +252,7 @@ func processEvent(eventJSON string) {
 			delay := time.Duration(retryCount+1) * time.Second
 			time.Sleep(delay)
 
+			rdb := getRedisClient()
 			err = rdb.LPush(ctx, "retry_queue", updatedJSON).Err()
 			if err != nil {
 				log.Println("Error pushing to retry queue:", err)
@@ -234,6 +270,7 @@ func processEvent(eventJSON string) {
 				return
 			}
 
+			rdb := getRedisClient()
 			err = rdb.LPush(ctx, "dead_letter_queue", eventJSON).Err()
 			if err != nil {
 				log.Println("Error pushing to DLQ:", err)
@@ -259,6 +296,7 @@ func processEvent(eventJSON string) {
 	saveEvent(event, "success", retryCount)
 
 	// Mark as processed only on success
+	rdb := getRedisClient()
 	err := rdb.SAdd(ctx, "processed_events", deliveryID).Err()
 	if err != nil {
 		log.Println("Error marking as processed:", err)
