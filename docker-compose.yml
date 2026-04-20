@@ -49,8 +49,6 @@ services:
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: github_events
-      DB_USER: postgres
       DB_PASSWORD: postgres
       REDIS_HOST: redis
       REDIS_PORT: 6379
