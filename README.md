@@ -27,7 +27,8 @@ This system demonstrates a production-grade event processing pipeline with the f
 - **Dead Letter Queue**: Events that fail after max retries are moved to DLQ
 - **Idempotency**: Duplicate events are detected and skipped
 - **Concurrent Processing**: Multiple workers process events in parallel
-- **Real-time Dashboard**: Live visualization of event pipeline status
+- **Production-Grade Observability**: Complete event lifecycle logging and monitoring
+- **Real-time Dashboard**: Live visualization of event pipeline status with detailed logs
 
 ## Quick Start (Docker Compose)
 
@@ -50,7 +51,8 @@ docker-compose up --build
 
 3. **Access the dashboard:**
 - Frontend Dashboard: http://localhost:3000
-- API Health Check: http://localhost:8081/events
+- API Health Check: http://localhost:8080/events
+- Observability Dashboard: http://localhost:3000 (with logs and filtering)
 
 ### Testing Webhooks
 
@@ -60,7 +62,7 @@ docker-compose up --build
 npm install -g ngrok
 
 # Start ngrok to expose local port
-ngrok http 8081
+ngrok http 8080
 ```
 
 2. **Configure GitHub webhook:**
@@ -83,7 +85,7 @@ You can also test the webhook manually:
 
 ```bash
 # Test webhook endpoint
-curl -X POST http://localhost:8081/webhook \
+curl -X POST http://localhost:8080/webhook \
   -H "Content-Type: application/json" \
   -H "X-GitHub-Event: push" \
   -H "X-Github-Delivery: test-123" \
@@ -257,7 +259,44 @@ SCARD processed_events
 - Events are tracked by delivery ID in Redis set
 - Duplicate events are skipped to ensure idempotency
 
-## Frontend Dashboard
+## Observability Dashboard
+
+The system includes comprehensive production-grade observability features:
+
+### Logging System
+- **Step-by-step logging**: Every event processing step is logged with timestamps
+- **Persistent storage**: Logs stored in PostgreSQL with incremental updates
+- **Complete lifecycle tracking**: From webhook receipt to final processing
+
+### Dashboard Features
+- **Real-time Statistics**: Total, success, failed, and retry counts
+- **Event Timeline**: Visual pipeline flow for each event
+- **Event Details**: Repository, branch, commit message, delivery ID
+- **Status Indicators**: Color-coded status badges (green=success, red=failed, yellow=retry)
+- **Filter Dropdown**: Filter events by status (All/Success/Failed/Retry/Pending)
+- **Terminal-style Logs Modal**: Click "View Logs" to see detailed processing timeline
+- **Auto-scroll logs**: Automatically scroll to latest log entries
+- **Auto-refresh**: Dashboard updates every 5 seconds
+
+### Log Format
+Each log entry includes timestamp and detailed message:
+```
+[2026-04-21 13:23:52] Event received from GitHub
+[2026-04-21 13:23:52] Event received and validated
+[2026-04-21 13:23:52] Event pushed to Redis queue for processing
+[2026-04-21 13:23:52] Worker picked up event for processing
+[2026-04-21 13:23:52] Starting initial event processing
+[2026-04-21 13:23:52] Successfully processed event: Complete logging test
+[2026-04-21 13:23:52] Marking event as processed
+[2026-04-21 13:23:52] Event processing completed successfully
+```
+
+### API Endpoints
+- `GET /events` - List all events with filtering support
+- `GET /events/:id/logs` - Retrieve detailed logs for specific event
+- `POST /webhook` - Receive GitHub webhook events
+
+### Frontend Dashboard
 
 The dashboard provides:
 - **Real-time Statistics**: Total, success, failed, and retry counts
@@ -271,6 +310,9 @@ The dashboard provides:
 - Visual flow from GitHub through API, Redis, Worker, to Database
 - Retry stages shown for events with retry attempts
 - Timeline showing event processing history
+- **NEW**: Click "View Logs" to see detailed processing timeline
+- **NEW**: Filter events by status
+- **NEW**: Row highlighting based on event status
 
 ## Troubleshooting
 
@@ -299,7 +341,7 @@ The dashboard provides:
 ### Health Checks
 ```bash
 # API health check
-curl http://localhost:8081/events
+curl http://localhost:8080/events
 
 # Database connectivity
 docker-compose exec postgres pg_isready -U postgres
