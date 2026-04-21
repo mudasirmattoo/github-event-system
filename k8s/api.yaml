@@ -14,15 +14,25 @@ spec:
     spec:
       containers:
       - name: api
-        image: github-api
+        image: github-event-api
         imagePullPolicy: Never
         ports:
         - containerPort: 8080
         env:
         - name: REDIS_HOST
           value: redis
+        - name: REDIS_PORT
+          value: "6379"
         - name: DB_HOST
           value: postgres
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "github_events"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          value: "postgres"
 ---
 apiVersion: v1
 kind: Service

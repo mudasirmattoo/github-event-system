@@ -14,10 +14,12 @@ spec:
     spec:
       containers:
       - name: worker
-        image: github-worker
+        image: github-event-worker
         imagePullPolicy: Never
         env:
         - name: REDIS_HOST
           value: redis
+        - name: REDIS_PORT
+          value: "6379"
         - name: DB_HOST
           value: postgres

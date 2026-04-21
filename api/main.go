@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strings"
-
-	"database/sql"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -21,9 +22,10 @@ var ctx = context.Background()
 func getRedisClient() *redis.Client {
 	redisHost := getEnv("REDIS_HOST", "localhost")
 	redisPort := getEnv("REDIS_PORT", "6379")
+	redisAddr := redisHost + ":" + redisPort
 
 	return redis.NewClient(&redis.Options{
-		Addr: redisHost + ":" + redisPort,
+		Addr: redisAddr,
 	})
 }
 
@@ -59,6 +61,25 @@ func initDB() {
 	}
 
 	log.Println("connected to PostgreSQL")
+}
+
+func appendLog(deliveryID, message string) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	logEntry := fmt.Sprintf("[%s] %s", timestamp, message)
+
+	_, err := db.Exec(`
+	UPDATE events 
+	SET logs = CASE 
+		WHEN logs IS NULL OR logs = '' THEN $1
+		ELSE logs || CHR(10) || $1
+		END,
+		updated_at = CURRENT_TIMESTAMP
+	WHERE delivery_id = $2
+	`, logEntry, deliveryID)
+
+	if err != nil {
+		log.Printf("Failed to append log for %s: %v", deliveryID, err)
+	}
 }
 
 func main() {
@@ -149,14 +170,30 @@ func main() {
 			return
 		}
 
+		// Initialize event in database with initial log
+		_, err = db.Exec(`
+		INSERT INTO events (delivery_id, event_type, repo, branch, message, status, retry_count, logs)
+		VALUES ($1, $2, $3, $4, $5, 'pending', 0, $6)
+		ON CONFLICT (delivery_id) DO NOTHING
+		`, deliveryID, eventType, repoName, branchName, message, fmt.Sprintf("[%s] Event received from GitHub", time.Now().Format("2006-01-02 15:04:05")))
+
+		if err != nil {
+			log.Printf("Failed to initialize event in database: %v", err)
+		}
+
+		// Log event received
+		appendLog(deliveryID, "Event received and validated")
+
 		// push to redis queue -- name github_events_queue
 		rdb := getRedisClient()
 		err = rdb.LPush(ctx, "github_events_queue", eventJSON).Err()
 		if err != nil {
 			log.Println("Redis push error:", err)
+			appendLog(deliveryID, "Failed to push event to Redis queue")
 			return
 		}
 
+		appendLog(deliveryID, "Event pushed to Redis queue for processing")
 		log.Println("Event pushed to Redis queue")
 
 		c.JSON(200, gin.H{
@@ -164,17 +201,17 @@ func main() {
 		})
 	})
 
-	r.GET("/events", func(c *gin.Context) {
+	r.GET("/", func(c *gin.Context) {
 		// Serve the frontend HTML file
 		c.File("../frontend/index.html")
 	})
 
-	r.GET("/api/events", func(c *gin.Context) {
+	r.GET("/events", func(c *gin.Context) {
 		rows, err := db.Query(`
 		SELECT delivery_id, event_type, repo, branch, message, status, retry_count, created_at
 		FROM events
 		ORDER BY created_at DESC
-	`)
+		`)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "DB error"})
 			return
@@ -206,6 +243,33 @@ func main() {
 		}
 
 		c.JSON(200, events)
+	})
+
+	r.GET("/events/:id/logs", func(c *gin.Context) {
+		deliveryID := c.Param("id")
+
+		var logs string
+		err := db.QueryRow("SELECT logs FROM events WHERE delivery_id = $1", deliveryID).Scan(&logs)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Event not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
+			}
+			return
+		}
+
+		// Split logs into array for better frontend handling
+		var logLines []string
+		if logs != "" {
+			logLines = strings.Split(logs, "\n")
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"delivery_id": deliveryID,
+			"logs":        logLines,
+			"raw_logs":    logs,
+		})
 	})
 	r.Run(":8080")
 }

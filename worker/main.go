@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"time"
-
-	"database/sql"
 
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
@@ -19,9 +18,10 @@ var ctx = context.Background()
 func getRedisClient() *redis.Client {
 	redisHost := getEnv("REDIS_HOST", "localhost")
 	redisPort := getEnv("REDIS_PORT", "6379")
+	redisAddr := redisHost + ":" + redisPort
 
 	return redis.NewClient(&redis.Options{
-		Addr: redisHost + ":" + redisPort,
+		Addr: redisAddr,
 	})
 }
 
@@ -209,6 +209,9 @@ func processEvent(eventJSON string) {
 		return
 	}
 
+	// Log event pickup
+	appendLog(deliveryID, "Worker picked up event for processing")
+
 	// Check if already processed (only for non-retry events)
 	isRetry, _ := event["is_retry"].(bool)
 
@@ -216,9 +219,13 @@ func processEvent(eventJSON string) {
 		rdb := getRedisClient()
 		exists, _ := rdb.SIsMember(ctx, "processed_events", deliveryID).Result()
 		if exists {
+			appendLog(deliveryID, "Duplicate event detected, skipping processing")
 			log.Println("Duplicate event detected, skipping:", deliveryID)
 			return
 		}
+		appendLog(deliveryID, "Starting initial event processing")
+	} else {
+		appendLog(deliveryID, fmt.Sprintf("Starting retry processing (attempt %d)", int(event["retry_count"].(float64))))
 	}
 
 	log.Println("Processing event...")
@@ -231,6 +238,7 @@ func processEvent(eventJSON string) {
 
 	// Simulate failure for github-event-system repo
 	if repo == "github-event-system" {
+		appendLog(deliveryID, fmt.Sprintf("Simulated failure detected for repo: %s", repo))
 		log.Println("simulated failure for repo:", repo)
 
 		retryVal, ok := event["retry_count"].(float64)
@@ -259,6 +267,7 @@ func processEvent(eventJSON string) {
 				return
 			}
 
+			appendLog(deliveryID, fmt.Sprintf("Retry attempt %d scheduled", retryCount+1))
 			log.Println("Retry attempt:", retryCount+1, "for delivery:", deliveryID)
 			saveEvent(event, "retry", retryCount+1)
 
@@ -277,6 +286,7 @@ func processEvent(eventJSON string) {
 				return
 			}
 
+			appendLog(deliveryID, fmt.Sprintf("Max retries (%d) reached, moving to Dead Letter Queue", retryCount))
 			log.Println("Max retries reached, moved to DLQ for delivery:", deliveryID)
 			saveEvent(event, "failed", retryCount)
 		}
@@ -285,6 +295,7 @@ func processEvent(eventJSON string) {
 	}
 
 	// Success case
+	appendLog(deliveryID, fmt.Sprintf("Successfully processed event: %s", event["message"]))
 	log.Println("SUCCESS processed event:", deliveryID, "message:", event["message"])
 
 	retryVal, ok := event["retry_count"].(float64)
@@ -297,11 +308,34 @@ func processEvent(eventJSON string) {
 
 	// Mark as processed only on success
 	rdb := getRedisClient()
+	appendLog(deliveryID, "Marking event as processed")
 	err := rdb.SAdd(ctx, "processed_events", deliveryID).Err()
 	if err != nil {
+		appendLog(deliveryID, "Failed to mark as processed in Redis")
 		log.Println("Error marking as processed:", err)
+	} else {
+		appendLog(deliveryID, "Event processing completed successfully")
 	}
 
+}
+
+func appendLog(deliveryID, message string) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	logEntry := fmt.Sprintf("[%s] %s", timestamp, message)
+
+	_, err := db.Exec(`
+	UPDATE events 
+	SET logs = CASE 
+		WHEN logs IS NULL OR logs = '' THEN $1
+		ELSE logs || CHR(10) || $1
+		END,
+		updated_at = CURRENT_TIMESTAMP
+	WHERE delivery_id = $2
+	`, logEntry, deliveryID)
+
+	if err != nil {
+		log.Printf("Failed to append log for %s: %v", deliveryID, err)
+	}
 }
 
 func saveEvent(event map[string]interface{}, status string, retryCount int) {
@@ -313,7 +347,8 @@ func saveEvent(event map[string]interface{}, status string, retryCount int) {
 	ON CONFLICT (delivery_id)
 	DO UPDATE SET 
 	status = EXCLUDED.status,
-	retry_count = EXCLUDED.retry_count
+	retry_count = EXCLUDED.retry_count,
+	updated_at = CURRENT_TIMESTAMP
 	`,
 		deliveryID,
 		event["event_type"],

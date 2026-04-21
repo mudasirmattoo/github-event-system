@@ -139,7 +139,19 @@
 
     <!-- Events Table -->
     <div class="bg-white border border-gray-200 shadow-lg rounded-2xl p-6">
-      <h2 class="text-2xl font-bold mb-6 text-gray-800">Recent Events</h2>
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-2xl font-bold text-gray-800">Recent Events</h2>
+        <div class="flex items-center space-x-4">
+          <label class="text-sm font-medium text-gray-600">Filter:</label>
+          <select id="statusFilter" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm">
+            <option value="all">All Events</option>
+            <option value="success">Success</option>
+            <option value="failed">Failed</option>
+            <option value="retry">Retrying</option>
+            <option value="pending">Pending</option>
+          </select>
+        </div>
+      </div>
       
       <div class="overflow-x-auto">
         <table class="w-full">
@@ -152,6 +164,7 @@
               <th class="px-4 py-3 text-center text-gray-600 font-semibold">Retries</th>
               <th class="px-4 py-3 text-left text-gray-600 font-semibold">Delivery ID</th>
               <th class="px-4 py-3 text-left text-gray-600 font-semibold">Time</th>
+              <th class="px-4 py-3 text-center text-gray-600 font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody id="tableBody" class="divide-y divide-gray-200">
@@ -166,7 +179,10 @@ let selectedEvent = null;
 
 async function fetchEvents() {
   try {
-    const res = await fetch("/api/events");
+    // const res = await fetch("/events");
+    // const res = await fetch("http://api:8080/events");
+
+    const res = await fetch("http://192.168.49.2:30080/events");
     const data = await res.json();
 
     // Update Stats
@@ -184,6 +200,18 @@ async function fetchEvents() {
       
       const row = document.createElement("tr");
       row.className = "event-card hover:bg-blue-50 cursor-pointer transition-colors";
+      
+      // Add row highlighting based on status
+      let rowClass = "event-card hover:bg-blue-50 cursor-pointer transition-colors";
+      if (event.status === 'failed') {
+        rowClass += " bg-red-50 border-l-4 border-red-500";
+      } else if (event.status === 'retry') {
+        rowClass += " bg-yellow-50 border-l-4 border-yellow-500";
+      } else if (event.status === 'success') {
+        rowClass += " bg-green-50 border-l-4 border-green-500";
+      }
+      
+      row.className = rowClass;
       
       row.innerHTML = `
         <td class="px-4 py-4">
@@ -222,6 +250,11 @@ async function fetchEvents() {
         <td class="px-4 py-4 text-sm text-gray-600">
           ${new Date(event.created_at).toLocaleString()}
         </td>
+        <td class="px-4 py-4 text-center">
+          <button onclick="showLogs('${event.delivery_id}')" class="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">
+            View Logs
+          </button>
+        </td>
       `;
 
       row.onclick = () => showPipeline(event);
@@ -234,6 +267,176 @@ async function fetchEvents() {
     }
   } catch (error) {
     console.error('Error fetching events:', error);
+  }
+}
+
+// Filter functionality
+document.getElementById('statusFilter').addEventListener('change', fetchEvents);
+
+// Modify fetchEvents to apply filter
+async function fetchEvents() {
+  try {
+    const statusFilter = document.getElementById('statusFilter').value;
+    
+    // const res = await fetch("/events");
+    const res = await fetch("http://192.168.49.2:30080/events");
+    const allData = await res.json();
+    
+    // Apply filter
+    let data = allData;
+    if (statusFilter !== 'all') {
+      data = allData.filter(e => e.status === statusFilter);
+    }
+
+    // Update Stats (based on all data)
+    document.getElementById("total").innerText = allData.length;
+    document.getElementById("success").innerText = allData.filter(e => e.status === "success").length;
+    document.getElementById("failed").innerText = allData.filter(e => e.status === "failed").length;
+    document.getElementById("retry").innerText = allData.filter(e => e.status === "retry").length;
+
+    // Update Table
+    const tableBody = document.getElementById("tableBody");
+    tableBody.innerHTML = "";
+
+    data.forEach(event => {
+      const statusConfig = getStatusConfig(event.status);
+      
+      const row = document.createElement("tr");
+      
+      // Add row highlighting based on status
+      let rowClass = "event-card hover:bg-blue-50 cursor-pointer transition-colors";
+      if (event.status === 'failed') {
+        rowClass += " bg-red-50 border-l-4 border-red-500";
+      } else if (event.status === 'retry') {
+        rowClass += " bg-yellow-50 border-l-4 border-yellow-500";
+      } else if (event.status === 'success') {
+        rowClass += " bg-green-50 border-l-4 border-green-500";
+      }
+      
+      row.className = rowClass;
+      
+      row.innerHTML = `
+        <td class="px-4 py-4">
+          <div class="flex items-center">
+            <div class="w-2 h-2 rounded-full ${statusConfig.bgColor} mr-3"></div>
+            <span class="font-medium text-gray-800">${event.repo || 'N/A'}</span>
+          </div>
+        </td>
+        <td class="px-4 py-4">
+          <span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-700 font-medium">
+            ${event.event_type || 'push'}
+          </span>
+        </td>
+        <td class="px-4 py-4">
+          <p class="text-sm text-gray-700 truncate max-w-xs" title="${event.message || 'No message'}">
+            ${event.message || 'No message'}
+          </p>
+        </td>
+        <td class="px-4 py-4">
+          <span class="px-3 py-1 text-xs rounded-full ${statusConfig.bgColor} ${statusConfig.textColor} font-medium">
+            ${statusConfig.icon} ${event.status}
+          </span>
+        </td>
+        <td class="px-4 py-4 text-center">
+          ${event.retry_count > 0 ? `
+            <span class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-700 font-medium">
+              ${event.retry_count}
+            </span>
+          ` : '<span class="text-gray-400">-</span>'}
+        </td>
+        <td class="px-4 py-4">
+          <code class="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600 font-mono">
+            ${event.delivery_id || 'N/A'}
+          </code>
+        </td>
+        <td class="px-4 py-4 text-sm text-gray-600">
+          ${new Date(event.created_at).toLocaleString()}
+        </td>
+        <td class="px-4 py-4 text-center">
+          <button onclick="showLogs('${event.delivery_id}')" class="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">
+            View Logs
+          </button>
+        </td>
+      `;
+
+      row.onclick = (e) => {
+        if (!e.target.closest('button')) {
+          showPipeline(event);
+        }
+      };
+      tableBody.appendChild(row);
+    });
+
+    // Auto-select first event if none selected
+    if (data.length > 0 && !selectedEvent) {
+      showPipeline(data[0]);
+    }
+  } catch (error) {
+    console.error('Error fetching events:', error);
+  }
+}
+
+// Show logs modal
+async function showLogs(deliveryID) {
+  try {
+    // const res = await fetch(`/events/${deliveryID}/logs`);
+    const res = await fetch(`http://192.168.49.2:30080/events/${deliveryID}/logs`);
+    const data = await res.json();
+    
+    if (res.status === 404) {
+      alert('Event not found');
+      return;
+    }
+    
+    if (res.status !== 200) {
+      alert('Error fetching logs');
+      return;
+    }
+    
+    // Create modal
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    modal.onclick = (e) => {
+      if (e.target === modal) {
+        document.body.removeChild(modal);
+      }
+    };
+    
+    const logsContent = data.logs.length > 0 ? data.logs.join('\n') : 'No logs available';
+    
+    modal.innerHTML = `
+      <div class="bg-gray-900 rounded-2xl p-6 max-w-4xl max-h-[80vh] w-full mx-4 overflow-hidden">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold text-white">Event Logs</h3>
+          <div class="flex items-center space-x-4">
+            <span class="text-sm text-gray-400 font-mono">${deliveryID}</span>
+            <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="bg-black rounded-lg p-4 font-mono text-sm text-green-400 overflow-y-auto max-h-[60vh] whitespace-pre-wrap" id="logsContent">
+          ${logsContent}
+        </div>
+        <div class="mt-4 flex justify-end">
+          <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+            Close
+          </button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Auto-scroll to bottom
+    const logsContainer = document.getElementById('logsContent');
+    logsContainer.scrollTop = logsContainer.scrollHeight;
+    
+  } catch (error) {
+    console.error('Error fetching logs:', error);
+    alert('Error fetching logs');
   }
 }
 

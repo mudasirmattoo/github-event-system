@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-script
+data:
+  init.sql: |
+    -- Initialize GitHub Events Database
+    CREATE TABLE IF NOT EXISTS events (
+        delivery_id VARCHAR(255) PRIMARY KEY,
+        event_type VARCHAR(100),
+        repo VARCHAR(255),
+        branch VARCHAR(255),
+        message TEXT,
+        status VARCHAR(50) DEFAULT 'pending',
+        retry_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Create indexes for better performance
+    CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
+    CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_events_repo ON events(repo);
+
+    -- Create trigger to update updated_at timestamp
+    CREATE OR REPLACE FUNCTION update_updated_at_column()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_at = CURRENT_TIMESTAMP;
+        RETURN NEW;
+    END;
+    $$ language 'plpgsql';
+
+    CREATE TRIGGER update_events_updated_at 
+        BEFORE UPDATE ON events 
+        FOR EACH ROW 
+        EXECUTE FUNCTION update_updated_at_column();
+
+    -- Insert sample data for testing
+    INSERT INTO events (delivery_id, event_type, repo, branch, message, status, retry_count) VALUES
+    ('sample-delivery-1', 'push', 'test-repo', 'main', 'Initial commit', 'success', 0),
+    ('sample-delivery-2', 'push', 'github-event-system', 'main', 'Test commit', 'failed', 3),
+    ('sample-delivery-3', 'pull_request', 'test-repo', 'main', 'PR opened', 'success', 0)
+    ON CONFLICT (delivery_id) DO NOTHING;

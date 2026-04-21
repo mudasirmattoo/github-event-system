@@ -3,11 +3,10 @@ FROM golang:latest
 
 WORKDIR /app
 
-COPY . .
+COPY api/. .
 
 RUN go mod tidy
 RUN go build -o main
-
 
 EXPOSE 8080
 

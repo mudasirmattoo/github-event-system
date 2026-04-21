@@ -4,7 +4,7 @@ FROM golang:latest
 
 WORKDIR /app
 
-COPY . .
+COPY worker/. .
 
 RUN go mod tidy
 RUN go build -o main .

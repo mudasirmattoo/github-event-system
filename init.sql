@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS events (
     message TEXT,
     status VARCHAR(50) DEFAULT 'pending',
     retry_count INTEGER DEFAULT 0,
+    logs TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

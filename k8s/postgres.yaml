@@ -14,6 +14,10 @@ spec:
       labels:
         app: postgres
     spec:
+      volumes:
+        - name: init-script
+          configMap:
+            name: postgres-init-script
       containers:
         - name: postgres
           image: postgres:latest
@@ -26,6 +30,10 @@ spec:
               value: "postgres"
             - name: POSTGRES_PASSWORD
               value: "postgres"
+          volumeMounts:
+            - name: init-script
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init.sql
           
 ---
 apiVersion: v1
