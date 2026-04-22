@@ -20,19 +20,40 @@ spec:
         - containerPort: 8080
         env:
         - name: REDIS_HOST
-          value: redis
+          valueFrom:
+            secretKeyRef:
+              name: github-event-secrets
+              key: REDIS_HOST
         - name: REDIS_PORT
-          value: "6379"
+          valueFrom:
+            secretKeyRef:
+              name: github-event-secrets
+              key: REDIS_PORT
         - name: DB_HOST
-          value: postgres
+          valueFrom:
+            secretKeyRef:
+              name: github-event-secrets
+              key: DB_HOST
         - name: DB_PORT
-          value: "5432"
+          valueFrom:
+            secretKeyRef:
+              name: github-event-secrets
+              key: DB_PORT
         - name: DB_NAME
-          value: "github_events"
+          valueFrom:
+            secretKeyRef:
+              name: github-event-secrets
+              key: DB_NAME
         - name: DB_USER
-          value: "postgres"
+          valueFrom:
+            secretKeyRef:
+              name: github-event-secrets
+              key: DB_USER
         - name: DB_PASSWORD
-          value: "postgres"
+          valueFrom:
+            secretKeyRef:
+              name: github-event-secrets
+              key: DB_PASSWORD
 ---
 apiVersion: v1
 kind: Service
