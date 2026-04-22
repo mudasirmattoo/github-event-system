@@ -17,265 +17,260 @@ import (
 
 var ctx = context.Background()
 
-// Configuration
+func getRedisClient() *redis.Client {
+	redisHost := getEnv("REDIS_HOST", "localhost")
+	redisPort := getEnv("REDIS_PORT", "6379")
+	redisAddr := redisHost + ":" + redisPort
 
-const (
-	maxRetries        = 3
-	baseRetryDelay    = time.Second
-	redisQueueMain    = "github_events_queue"
-	redisQueueRetry   = "retry_queue"
-	redisQueueDLQ     = "dead_letter_queue"
-	redisProcessedSet = "processed_events"
-)
+	return redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+}
 
 func getEnv(key, defaultValue string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	if value := os.Getenv(key); value != "" {
+		return value
 	}
 	return defaultValue
 }
 
 func getWorkerCount() int {
-	if s := os.Getenv("WORKER_COUNT"); s != "" {
-		var n int
-		if _, err := fmt.Sscanf(s, "%d", &n); err == nil && n > 0 {
-			return n
+	if count := os.Getenv("WORKER_COUNT"); count != "" {
+		if c, err := fmt.Sscanf(count, "%d", new(int)); err == nil && c == 1 {
+			var wc int
+			fmt.Sscanf(count, "%d", &wc)
+			return wc
 		}
 	}
 	return 5
 }
 
-func getRedisClient() *redis.Client {
-	addr := getEnv("REDIS_HOST", "localhost") + ":" + getEnv("REDIS_PORT", "6379")
-	return redis.NewClient(&redis.Options{Addr: addr})
-}
+const defaultWorkerCount = 5
 
 var db *sql.DB
 
 func initDB() {
-	connStr := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		getEnv("DB_HOST", "localhost"),
-		getEnv("DB_PORT", "5432"),
-		getEnv("DB_USER", "postgres"),
-		getEnv("DB_PASSWORD", "postgres"),
-		getEnv("DB_NAME", "github_events"),
-	)
-
 	var err error
+
+	dbHost := getEnv("DB_HOST", "localhost")
+	dbPort := getEnv("DB_PORT", "5432")
+	dbName := getEnv("DB_NAME", "github_events")
+	dbUser := getEnv("DB_USER", "postgres")
+	dbPassword := getEnv("DB_PASSWORD", "postgres")
+
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword, dbName)
+
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatal("DB connection error:", err)
 	}
-	if err = db.Ping(); err != nil {
+
+	err = db.Ping()
+	if err != nil {
 		log.Fatal("DB not reachable:", err)
 	}
 
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-
-	log.Println("Connected to PostgreSQL")
+	log.Println("connected to postgres")
 }
 
 func main() {
 	initDB()
-	log.Println("Worker started — waiting for events")
 
+	log.Println("Worker started... Waiting for events")
+
+	// Channel to hold jobs
 	jobs := make(chan string, 100)
 
+	// Start workers
 	workerCount := getWorkerCount()
 	for i := 0; i < workerCount; i++ {
 		go worker(jobs, i)
 	}
 
+	// Fetch from Redis
 	rdb := getRedisClient()
 	for {
-		result, err := rdb.BRPop(ctx, 0, redisQueueMain, redisQueueRetry).Result()
+		result, err := rdb.BRPop(ctx, 0*time.Second, "github_events_queue", "retry_queue").Result()
 		if err != nil {
-			log.Println("Redis BRPop error:", err)
+			log.Println("Redis error:", err)
 			time.Sleep(2 * time.Second)
 			continue
 		}
-		jobs <- result[1]
+
+		eventJSON := result[1]
+
+		// Send job to workers
+		jobs <- eventJSON
 	}
 }
 
-// Worker goroutine
 func worker(jobs <-chan string, id int) {
-	log.Printf("Worker %d ready\n", id)
+	log.Printf("Worker %d started\n", id)
+
 	for eventJSON := range jobs {
-		log.Printf("Worker %d picked up event\n", id)
+		log.Printf("Worker %d processing event\n", id)
 		processEvent(eventJSON)
 	}
 }
 
 func processEvent(eventJSON string) {
+
 	var event map[string]interface{}
+
 	if err := json.Unmarshal([]byte(eventJSON), &event); err != nil {
-		log.Println("JSON parse error:", err)
+		log.Println("Error parsing event:", err)
 		return
 	}
 
 	deliveryID, ok := event["delivery_id"].(string)
-	if !ok || deliveryID == "" {
-		log.Println("Missing or invalid delivery_id, discarding event")
+	if !ok {
+		log.Println("Invalid delivery ID")
 		return
 	}
 
 	rdb := getRedisClient()
 
+	// Log event pickup
+	appendLog(deliveryID, "Worker picked up event for processing")
+
+	// Check if already processed (only for non-retry events)
+	isRetry, _ := event["is_retry"].(bool)
 	retryVal, _ := event["retry_count"].(float64)
 	retryCount := int(retryVal)
-	isRetry, _ := event["is_retry"].(bool)
+
 	message, _ := event["message"].(string)
-	eventType, _ := event["event_type"].(string)
 
-	appendLog(deliveryID, fmt.Sprintf("Worker picked up event (type=%s, retry=%d)", eventType, retryCount))
-
-	// Idempotency check (skip on retries — already checked on first attempt) ──
 	if !isRetry {
-		exists, err := rdb.SIsMember(ctx, redisProcessedSet, deliveryID).Result()
-		if err != nil {
-			appendLog(deliveryID, "Redis idempotency check failed — processing anyway")
-			log.Printf("Redis SIsMember error for %s: %v", deliveryID, err)
-		} else if exists {
-			appendLog(deliveryID, "Duplicate event — skipped")
-			log.Println("Duplicate event, skipping:", deliveryID)
+		rdb := getRedisClient()
+		exists, _ := rdb.SIsMember(ctx, "processed_events", deliveryID).Result()
+		if exists {
+			appendLog(deliveryID, "Duplicate event detected, skipping processing")
+			log.Println("Duplicate event detected, skipping:", deliveryID)
 			return
 		}
-		appendLog(deliveryID, "Idempotency check passed — processing")
-		// Upsert initial record so we can log against it from the start
-		saveEvent(event, "processing", retryCount)
+		appendLog(deliveryID, "Starting initial event processing")
 	} else {
-		appendLog(deliveryID, fmt.Sprintf("Retry attempt %d — processing", retryCount))
+		appendLog(deliveryID, fmt.Sprintf("Starting retry processing (attempt %d)", int(event["retry_count"].(float64))))
 	}
 
-	// failure simulation
-	if shouldFail(message, retryCount) {
-		appendLog(deliveryID, "Processing failure encountered")
-		handleFailure(rdb, event, deliveryID, retryCount)
+	log.Println("Processing event...")
+
+	// Failure simulation
+	rand.Seed(time.Now().UnixNano())
+
+	shouldFail := false
+
+	// Condition 1: message explicitly contains "fail" — only on first attempt,
+
+	if retryCount == 0 && strings.Contains(strings.ToLower(message), "fail") {
+		shouldFail = true
+	}
+
+	failurePct := 75
+	if retryCount > 0 {
+		failurePct = 70
+	}
+	if rand.Intn(100) < failurePct {
+		shouldFail = true
+	}
+
+	if shouldFail {
+		appendLog(deliveryID, "Simulated failure occurred")
+
+		if retryCount < 3 {
+			// Increment retry
+			retryCount++
+			event["retry_count"] = retryCount
+			event["is_retry"] = true
+
+			updatedJSON, err := json.Marshal(event)
+			if err != nil {
+				log.Println("Error marshaling retry event:", err)
+				return
+			}
+
+			// Exponential backoff: 1s, 2s, 4s
+			delay := time.Duration(1<<uint(retryCount-1)) * time.Second
+			appendLog(deliveryID, fmt.Sprintf("Retry attempt %d scheduled", retryCount))
+			time.Sleep(delay)
+
+			err = rdb.LPush(ctx, "retry_queue", updatedJSON).Err()
+			if err != nil {
+				log.Println("Retry push error:", err)
+				appendLog(deliveryID, "Failed to push to retry queue")
+				return
+			}
+
+			appendLog(deliveryID, fmt.Sprintf("Retry attempt %d queued", retryCount))
+			saveEvent(event, "retry", retryCount)
+
+		} else {
+			// DEAD LETTER QUEUE
+			eventJSON, _ := json.Marshal(event)
+
+			err := rdb.LPush(ctx, "dead_letter_queue", eventJSON).Err()
+			if err != nil {
+				log.Println("DLQ push error:", err)
+				appendLog(deliveryID, "Failed to push to DLQ")
+				return
+			}
+
+			appendLog(deliveryID, "Max retries (3) reached, moving to Dead Letter Queue")
+			saveEvent(event, "failed", retryCount)
+		}
+
 		return
 	}
 
-	//Success
-	appendLog(deliveryID, fmt.Sprintf("Event processed successfully (message=%q)", message))
-	log.Printf("SUCCESS delivery_id=%s message=%s\n", deliveryID, message)
+	// Success case
+	appendLog(deliveryID, fmt.Sprintf("Successfully processed event: %s", event["message"]))
+	log.Println("SUCCESS processed event:", deliveryID, "message:", event["message"])
 
 	saveEvent(event, "success", retryCount)
 
-	if err := rdb.SAdd(ctx, redisProcessedSet, deliveryID).Err(); err != nil {
-		appendLog(deliveryID, "Warning: failed to mark event as processed in Redis")
-		log.Println("SAdd error:", err)
+	// Mark as processed only on success
+	appendLog(deliveryID, "Marking event as processed")
+	err := rdb.SAdd(ctx, "processed_events", deliveryID).Err()
+	if err != nil {
+		appendLog(deliveryID, "Failed to mark as processed in Redis")
+		log.Println("Error marking as processed:", err)
 	} else {
-		appendLog(deliveryID, "Marked as processed — done")
-	}
-}
-
-// Failure handling
-
-func handleFailure(rdb *redis.Client, event map[string]interface{}, deliveryID string, retryCount int) {
-	if retryCount < maxRetries {
-		retryCount++
-		event["retry_count"] = retryCount
-		event["is_retry"] = true
-
-		updatedJSON, err := json.Marshal(event)
-		if err != nil {
-			log.Println("Marshal error on retry:", err)
-			appendLog(deliveryID, "Failed to serialise event for retry")
-			return
-		}
-
-		// Exponential backoff: 2^(retryCount-1) seconds — 1s, 2s, 4s
-		delay := time.Duration(1<<uint(retryCount-1)) * baseRetryDelay
-		appendLog(deliveryID, fmt.Sprintf("Scheduling retry %d after %v backoff", retryCount, delay))
-		log.Printf("Retry %d for %s in %v\n", retryCount, deliveryID, delay)
-		time.Sleep(delay)
-
-		if err = rdb.LPush(ctx, redisQueueRetry, updatedJSON).Err(); err != nil {
-			log.Println("Retry push error:", err)
-			appendLog(deliveryID, "Failed to enqueue retry")
-			return
-		}
-
-		appendLog(deliveryID, fmt.Sprintf("Retry %d enqueued", retryCount))
-		saveEvent(event, "retry", retryCount)
-
-	} else {
-		// Max retries exhausted - DLQ
-		dlqJSON, _ := json.Marshal(event)
-		if err := rdb.LPush(ctx, redisQueueDLQ, dlqJSON).Err(); err != nil {
-			log.Println("DLQ push error:", err)
-			appendLog(deliveryID, "Failed to push to DLQ")
-			return
-		}
-		appendLog(deliveryID, fmt.Sprintf("Max retries (%d) exhausted — moved to DLQ", maxRetries))
-		log.Printf("DLQ delivery_id=%s\n", deliveryID)
-		saveEvent(event, "failed", retryCount)
-	}
-}
-
-// Failure simulation
-
-// shouldFail decides whether this processing attempt should be treated as a
-// failure. Rules (designed to produce a realistic mix of outcomes):
-//
-//  1. Messages explicitly tagged "fail" always fail on the FIRST attempt only —
-//     this lets you test the retry path without causing permanent DLQ entries.
-//  2. A base 15 % random transient failure rate (infrastructure noise).
-//  3. On retries the failure rate drops to 5 % — most retries succeed,
-//     so the majority of events end up with status "success" after retrying.
-//
-// Expected steady-state outcome distribution (rough):
-//
-//	~72 % success on first attempt
-//	~24 % success after 1–3 retries
-//	 ~4 % end up in DLQ (failed)
-func shouldFail(message string, retryCount int) bool {
-	// Explicit test trigger — only forces failure on the initial attempt so
-	// the event still goes through the retry path and eventually succeeds.
-	if retryCount == 0 && strings.Contains(strings.ToLower(message), "fail") {
-		return true
+		appendLog(deliveryID, "Event processing completed successfully")
 	}
 
-	// Transient failure probability decreases with each retry
-	failurePct := 15
-	if retryCount > 0 {
-		failurePct = 5
-	}
-
-	return rand.Intn(100) < failurePct
 }
 
 func appendLog(deliveryID, message string) {
-	entry := fmt.Sprintf("[%s] %s", time.Now().Format("2006-01-02 15:04:05"), message)
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	logEntry := fmt.Sprintf("[%s] %s", timestamp, message)
 
 	_, err := db.Exec(`
-		UPDATE events
-		SET logs      = CASE
-		                  WHEN logs IS NULL OR logs = '' THEN $1
-		                  ELSE logs || CHR(10) || $1
-		                END,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE delivery_id = $2
-	`, entry, deliveryID)
+	UPDATE events 
+	SET logs = CASE 
+		WHEN logs IS NULL OR logs = '' THEN $1
+		ELSE logs || CHR(10) || $1
+		END,
+		updated_at = CURRENT_TIMESTAMP
+	WHERE delivery_id = $2
+	`, logEntry, deliveryID)
 
 	if err != nil {
-		log.Printf("appendLog failed for %s: %v", deliveryID, err)
+		log.Printf("Failed to append log for %s: %v", deliveryID, err)
 	}
 }
 
 func saveEvent(event map[string]interface{}, status string, retryCount int) {
-	deliveryID, _ := event["delivery_id"].(string)
+	deliveryID := event["delivery_id"].(string)
 
 	_, err := db.Exec(`
-		INSERT INTO events (delivery_id, event_type, repo, branch, message, status, retry_count)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (delivery_id) DO UPDATE
-		SET status      = EXCLUDED.status,
-		    retry_count = EXCLUDED.retry_count,
-		    updated_at  = CURRENT_TIMESTAMP
+	INSERT INTO events (delivery_id, event_type, repo, branch, message, status, retry_count)
+	VALUES ($1, $2, $3, $4, $5, $6, $7)
+	ON CONFLICT (delivery_id)
+	DO UPDATE SET 
+	status = EXCLUDED.status,
+	retry_count = EXCLUDED.retry_count,
+	updated_at = CURRENT_TIMESTAMP
 	`,
 		deliveryID,
 		event["event_type"],
@@ -287,7 +282,7 @@ func saveEvent(event map[string]interface{}, status string, retryCount int) {
 	)
 
 	if err != nil {
-		log.Printf("saveEvent error for %s: %v", deliveryID, err)
+		log.Println("DB insert error:", err)
 	}
 }
 
