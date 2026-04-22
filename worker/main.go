@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -209,11 +211,17 @@ func processEvent(eventJSON string) {
 		return
 	}
 
+	rdb := getRedisClient()
+
 	// Log event pickup
 	appendLog(deliveryID, "Worker picked up event for processing")
 
 	// Check if already processed (only for non-retry events)
 	isRetry, _ := event["is_retry"].(bool)
+	retryVal, _ := event["retry_count"].(float64)
+	retryCount := int(retryVal)
+
+	message, _ := event["message"].(string)
 
 	if !isRetry {
 		rdb := getRedisClient()
@@ -230,64 +238,70 @@ func processEvent(eventJSON string) {
 
 	log.Println("Processing event...")
 
-	repo, ok := event["repo"].(string)
+	// repo, ok := event["repo"].(string)
 	if !ok {
 		log.Println("Invalid repo in event")
 		return
 	}
 
 	// Simulate failure for github-event-system repo
-	if repo == "github-event-system" {
-		appendLog(deliveryID, fmt.Sprintf("Simulated failure detected for repo: %s", repo))
-		log.Println("simulated failure for repo:", repo)
 
-		retryVal, ok := event["retry_count"].(float64)
-		if !ok {
-			retryVal = 0
-		}
-		retryCount := int(retryVal)
+	rand.Seed(time.Now().UnixNano())
+
+	shouldFail := false
+
+	// Condition 1: message contains "fail"
+	if strings.Contains(strings.ToLower(message), "fail") {
+		shouldFail = true
+	}
+
+	// Condition 2: random failure (30%)
+	if rand.Intn(100) < 30 {
+		shouldFail = true
+	}
+
+	if shouldFail {
+		appendLog(deliveryID, "Simulated failure occurred")
 
 		if retryCount < 3 {
-			event["retry_count"] = retryCount + 1
+			// Increment retry
+			retryCount++
+			event["retry_count"] = retryCount
 			event["is_retry"] = true
+
 			updatedJSON, err := json.Marshal(event)
 			if err != nil {
 				log.Println("Error marshaling retry event:", err)
 				return
 			}
 
-			// Add delay before retry (exponential backoff)
-			delay := time.Duration(retryCount+1) * time.Second
+			// Exponential backoff
+			delay := time.Duration(retryCount) * time.Second
+			appendLog(deliveryID, fmt.Sprintf("Retrying after %v delay", delay))
 			time.Sleep(delay)
 
-			rdb := getRedisClient()
 			err = rdb.LPush(ctx, "retry_queue", updatedJSON).Err()
 			if err != nil {
-				log.Println("Error pushing to retry queue:", err)
+				log.Println("Retry push error:", err)
+				appendLog(deliveryID, "Failed to push to retry queue")
 				return
 			}
 
-			appendLog(deliveryID, fmt.Sprintf("Retry attempt %d scheduled", retryCount+1))
-			log.Println("Retry attempt:", retryCount+1, "for delivery:", deliveryID)
-			saveEvent(event, "retry", retryCount+1)
+			appendLog(deliveryID, fmt.Sprintf("Retry attempt %d queued", retryCount))
+			saveEvent(event, "retry", retryCount)
 
 		} else {
-			// Max retries reached, move to dead letter queue
-			eventJSON, err := json.Marshal(event)
+			// --- DEAD LETTER QUEUE ---
+			eventJSON, _ := json.Marshal(event)
+
+			err := rdb.LPush(ctx, "dead_letter_queue", eventJSON).Err()
 			if err != nil {
-				log.Println("Error marshaling failed event:", err)
+				log.Println("DLQ push error:", err)
+				appendLog(deliveryID, "Failed to push to DLQ")
 				return
 			}
 
-			rdb := getRedisClient()
-			err = rdb.LPush(ctx, "dead_letter_queue", eventJSON).Err()
-			if err != nil {
-				log.Println("Error pushing to DLQ:", err)
-				return
-			}
-
-			appendLog(deliveryID, fmt.Sprintf("Max retries (%d) reached, moving to Dead Letter Queue", retryCount))
-			log.Println("Max retries reached, moved to DLQ for delivery:", deliveryID)
+			appendLog(deliveryID, "Max retries reached → moved to DLQ")
 			saveEvent(event, "failed", retryCount)
 		}
 
@@ -298,16 +312,9 @@ func processEvent(eventJSON string) {
 	appendLog(deliveryID, fmt.Sprintf("Successfully processed event: %s", event["message"]))
 	log.Println("SUCCESS processed event:", deliveryID, "message:", event["message"])
 
-	retryVal, ok := event["retry_count"].(float64)
-	if !ok {
-		retryVal = 0
-	}
-	retryCount := int(retryVal)
-
 	saveEvent(event, "success", retryCount)
 
 	// Mark as processed only on success
-	rdb := getRedisClient()
 	appendLog(deliveryID, "Marking event as processed")
 	err := rdb.SAdd(ctx, "processed_events", deliveryID).Err()
 	if err != nil {
