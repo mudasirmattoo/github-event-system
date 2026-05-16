@@ -105,3 +105,24 @@ Thumbs.db
 # Local development
 .local/
 local/
+
+
+
+# Local .terraform directories (contains binaries and downloaded modules)
+**/.terraform/*
+
+# .tfstate files (contains sensitive infrastructure states)
+**/*.tfstate
+**/*.tfstate.*
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Exclude terraform.tfvars if you use them for local secrets
+**/*.tfvars
+**/*.tfvars.json
+
+# Override for local state mirror directories
+.terraform.rc
+terraform.rc
