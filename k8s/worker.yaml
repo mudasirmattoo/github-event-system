@@ -14,8 +14,8 @@ spec:
     spec:
       containers:
       - name: worker
-        image: github-event-worker
-        imagePullPolicy: Never
+        image: 537765357717.dkr.ecr.us-east-1.amazonaws.com/github-events-repo:worker-latest
+        imagePullPolicy: IfNotPresent
         env:
         - name: REDIS_HOST
           valueFrom:
