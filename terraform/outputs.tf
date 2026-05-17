@@ -21,3 +21,8 @@ output "region" {
 output "oidc_provider_arn" {
   value = module.eks.oidc_provider_arn
 }
+
+output "ecr_repository_url" {
+  description = "The URL of the ECR repository"
+  value       = aws_ecr_repository.github-events-repo.repository_url
+}

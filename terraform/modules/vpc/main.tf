@@ -6,7 +6,7 @@ data "aws_availability_zones" "available" {}
 
 
 locals {
-    cluster_name = "github-event-system-eks"
+  cluster_name = "github-event-system-eks"
 }
 
 module "vpc" {

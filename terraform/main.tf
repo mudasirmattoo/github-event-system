@@ -16,6 +16,29 @@ module "eks" {
   source = "./modules/eks"
 
   vpc_id                   = module.vpc.vpc_id
-  private_subnets          = module.vpc.private_subnets
+  subnet_ids               = module.vpc.private_subnets
   worker_security_group_id = module.security_group.security_group_id
+}
+
+resource "aws_ecr_repository" "github-events-repo" {
+  name                 = "github-events-repo"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+}
+
+resource "aws_ecr_repository_policy" "github-events-repo-policy" {
+  repository = aws_ecr_repository.github-events-repo.name
+  policy = jsonencode({
+    Version = "2008-10-17",
+    Statement = [
+      {
+        Sid    = "AllowPushPull",
+        Effect = "Allow",
+        Principal = {
+          AWS = "*"
+        },
+        Action = ["ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:GetAuthorizationToken"]
+      }
+    ]
+  })
 }
