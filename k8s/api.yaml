@@ -15,7 +15,7 @@ spec:
       containers:
       - name: api
         image: 537765357717.dkr.ecr.us-east-1.amazonaws.com/github-events-repo:api-latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
         env:

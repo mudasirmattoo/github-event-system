@@ -182,7 +182,7 @@ async function fetchEvents() {
     // const res = await fetch("/events");
     // const res = await fetch("http://api:8080/events");
 
-    const res = await fetch("http://192.168.49.2:30080/events");
+    const res = await fetch("/events");
     const data = await res.json();
 
     // Update Stats
@@ -279,7 +279,7 @@ async function fetchEvents() {
     const statusFilter = document.getElementById('statusFilter').value;
     
     // const res = await fetch("/events");
-    const res = await fetch("http://192.168.49.2:30080/events");
+    const res = await fetch("/events");
     const allData = await res.json();
     
     // Apply filter
@@ -380,7 +380,7 @@ async function fetchEvents() {
 async function showLogs(deliveryID) {
   try {
     // const res = await fetch(`/events/${deliveryID}/logs`);
-    const res = await fetch(`http://192.168.49.2:30080/events/${deliveryID}/logs`);
+    const res = await fetch(`/events/${deliveryID}/logs`);
     const data = await res.json();
     
     if (res.status === 404) {
