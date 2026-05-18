@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: github-event-system-ingress
+  annotations:
+    # Use the AWS Application Load Balancer
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # Route traffic directly to Pod IPs for maximum performance
+    alb.ingress.kubernetes.io/target-type: ip
+    # Group load balancers or customize health checks if needed
+    alb.ingress.kubernetes.io/healthcheck-path: /events
+    alb.ingress.kubernetes.io/healthcheck-port: "8080"
+spec:
+  ingressClassName: alb
+  rules:
+  - http:
+      paths:
+      # Route Webhook ingestion to API
+      - path: /webhook
+        pathType: Exact
+        backend:
+          service:
+            name: api
+            port:
+              number: 8080
+      # Route Events retrieval to API
+      - path: /events
+        pathType: Exact
+        backend:
+          service:
+            name: api
+            port:
+              number: 8080
+      # Route all other dashboard traffic to Frontend
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
