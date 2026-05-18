@@ -150,51 +150,48 @@ python3 -m http.server 3000  # or use any static server
 | `REDIS_PORT` | `6379` | Redis port |
 | `WORKER_COUNT` | `5` | Number of worker goroutines |
 
-## Kubernetes Deployment
+## Production Deployment (AWS EKS)
+
+This project has been configured for production deployment on AWS Elastic Kubernetes Service (EKS) using the AWS Load Balancer Controller for Ingress.
 
 ### Prerequisites
-- Kubernetes cluster (minikube, Docker Desktop, etc.)
-- kubectl configured
+- Active AWS account with EKS cluster deployed
+- AWS Load Balancer Controller (LBC) installed in the cluster
+- `kubectl` configured with your cluster context
+- Docker images pushed to an ECR repository
 
-### Deploy to Kubernetes
+### Deployment Steps
 
-1. **Create Redis deployment:**
+1. **Database and Cache Setup**
+First, deploy the Redis and PostgreSQL instances. The PostgreSQL setup includes a ConfigMap with the initialization schema, which prepares the `events` table with all necessary columns (including the `logs` column for detailed tracking):
 ```bash
+kubectl apply -f k8s/postgres-configmap.yaml
+kubectl apply -f k8s/postgres.yaml
 kubectl apply -f k8s/redis.yaml
 ```
 
-2. **Create PostgreSQL deployment:**
-```bash
-kubectl apply -f k8s/postgres.yaml
-```
-
-3. **Build and push images:**
-```bash
-# Build API image
-docker build -t github-api ./api
-docker tag github-api your-registry/github-api
-docker push your-registry/github-api
-
-# Build Worker image
-docker build -t github-worker ./worker
-docker tag github-worker your-registry/github-worker
-docker push your-registry/github-worker
-```
-
-4. **Deploy services:**
+2. **Deploy Application Services**
+Apply the backend API, the processing Worker, and the web Frontend deployments:
 ```bash
 kubectl apply -f k8s/api.yaml
 kubectl apply -f k8s/worker.yaml
+kubectl apply -f k8s/frontend.yaml
 ```
 
-5. **Access services:**
+3. **Configure Routing (ALB Ingress)**
+Apply the Ingress rules which configure the AWS Application Load Balancer. The ALB handles external traffic routing transparently:
+- `/webhook` and `/events/*` traffic is routed to the API service.
+- All other traffic (`/`) is routed to the frontend Nginx service.
 ```bash
-# Get API service URL
-kubectl get service api
-
-# Port-forward for local access
-kubectl port-forward service/api 8080:8080
+kubectl apply -f k8s/ingress.yaml
 ```
+
+4. **Access the Application**
+Retrieve the public DNS name provisioned by your AWS ALB:
+```bash
+kubectl get ingress github-event-system-ingress
+```
+Use the provided `ADDRESS` (e.g., `k8s-default-githubev-...elb.amazonaws.com`) in your browser to access the live dashboard!
 
 ## Monitoring and Debugging
 
